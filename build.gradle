@@ -1,0 +1,141 @@
+plugins {
+    id 'org.springframework.boot' version '2.6.4'
+    id 'io.spring.dependency-management' version '1.0.11.RELEASE'
+    id 'java'
+    id 'maven-publish'
+    id 'jacoco'
+}
+
+def versions = [
+        junit   : '5.8.2'
+]
+
+def projectBaseVersion = '1.0'
+def projectVersion = "1.0.0-SNAPSHOT"
+
+group "com.github"
+version projectVersion
+description = "Client STS using Spring WS"
+java.sourceCompatibility = JavaVersion.VERSION_11
+
+configurations {
+    jaxb
+}
+
+task genJaxb {
+    ext.sourcesDir = "${buildDir}/generated/sources/jaxb"
+    ext.classesDir = "${buildDir}/classes/jaxb"
+    ext.schema = file("${projectDir}/src/main/resources/sts/DocumentoSpesa730p.wsdl")
+
+    outputs.dir classesDir
+
+    doLast() {
+        project.ant {
+            taskdef name: "xjc", classname: "com.sun.tools.xjc.XJCTask",
+                    classpath: configurations.jaxb.asPath
+            mkdir(dir: sourcesDir)
+            mkdir(dir: classesDir)
+
+            xjc(destdir: sourcesDir, schema: schema,
+                    package: "com.github.sts.api") {
+                arg(value: "-wsdl")
+                produces(dir: sourcesDir, includes: "**/*.java")
+            }
+
+            javac(destdir: classesDir, source: 11, target: 11, debug: true,
+                    debugLevel: "lines,vars,source",
+                    classpath: configurations.jaxb.asPath) {
+                src(path: sourcesDir)
+                include(name: "**/*.java")
+                include(name: "*.java")
+            }
+
+            copy(todir: classesDir) {
+                fileset(dir: sourcesDir, erroronmissingdir: false) {
+                    exclude(name: "**/*.java")
+                }
+            }
+        }
+    }
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+dependencyManagement {
+
+}
+
+dependencies {
+    //TODO: Check how to deal with this dependencies, maybe we can use the bom pom and dependency management
+    implementation('org.springframework.boot:spring-boot-starter-web-services') {
+        exclude group: 'org.springframework.boot', module: 'spring-boot-starter-tomcat'
+    }
+    implementation 'org.springframework.ws:spring-ws-core'
+    implementation 'org.springframework.ws:spring-ws-support'
+    implementation 'org.springframework.ws:spring-ws-security'
+
+    // For Java 11: com.sun.xml removed from jdk
+    implementation 'org.glassfish.jaxb:jaxb-runtime'
+    implementation(files(genJaxb.classesDir).builtBy(genJaxb))
+
+    jaxb "com.sun.xml.bind:jaxb-xjc:2.1.7"
+
+    testImplementation "org.junit.jupiter:junit-jupiter-api:${versions.junit}"
+    testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${versions.junit}"
+}
+
+test {
+    useJUnitPlatform()
+    finalizedBy jacocoTestReport
+}
+
+def jacocoExclude = [
+        "**/com/github/sts/api/**/*.*"
+]
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        html.required = true
+        xml.required = true
+        csv.required = true
+    }
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            fileTree(dir: it, exclude: jacocoExclude)
+        }))
+    }
+}
+
+//Jacoco code coverage verification
+jacocoTestCoverageVerification {
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            fileTree(dir: it, exclude: jacocoExclude)
+        }))
+    }
+
+    violationRules {
+        failOnViolation = false
+        rule {
+            element = 'CLASS'
+            limit {
+                counter = 'LINE'
+                minimum = 0.8
+            }
+        }
+        rule {
+            element = 'CLASS'
+            limit {
+                counter = 'BRANCH'
+                minimum = 0.7
+            }
+        }
+    }
+}
+
+//Dependencies
+check.dependsOn jacocoTestCoverageVerification
